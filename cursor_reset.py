@@ -176,8 +176,8 @@ def verify():
 
 
 def status():
-    print(f'Cursor install: {APP_BASE}')
-    print(f'Cursor version: {get_version()}')
+    print(f'Cursor install: {APP_BASE or "(not found on this machine)"}')
+    print(f'Cursor version: {get_version() if APP_BASE else "(n/a)"}')
     print(f'globalStorage:  {GLOBAL_STORAGE}')
     print()
     if STORAGE_JSON.exists():
@@ -191,6 +191,8 @@ def status():
 
 
 def get_version():
+    if not APP_BASE:
+        return '(n/a)'
     pj = APP_BASE / 'product.json'
     if pj.exists():
         try:
