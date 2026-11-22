@@ -17,6 +17,7 @@ Everything is backed up before touching. Verified after. Idempotent.
 Works on macOS / Windows / Linux. Zero dependencies.
 """
 import argparse
+import base64
 import json
 import os
 import platform
@@ -229,10 +230,239 @@ def reset(quiet=False):
             'a new account is the reliable path (by design of Cursor, not this tool).')
 
 
+# ---------------- usage / limits ----------------
+
+def get_user_id():
+    """Local account id (for building the Workos session cookie)."""
+    if not STATE_DB.exists():
+        return None
+    try:
+        conn = sqlite3.connect(STATE_DB)
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM itemTable WHERE key = 'cursorAuth/cachedScopedProfile'")
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            auth_id = json.loads(row[0]).get('authId', '')
+            return auth_id.split('|')[-1] if '|' in auth_id else auth_id
+    except (sqlite3.Error, json.JSONDecodeError, IndexError):
+        pass
+    return None
+
+
+def get_auth_token(decrypt=True):
+    """Extract the local accessToken (decrypts Chromium safe-storage via
+    the Cursor Safe Storage keychain entry on macOS). Read-only."""
+    if not STATE_DB.exists():
+        return None
+    try:
+        conn = sqlite3.connect(STATE_DB)
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM itemTable WHERE key = 'cursorAuth/accessToken'")
+        row = cur.fetchone()
+        conn.close()
+    except sqlite3.Error:
+        return None
+    if not row or not isinstance(row[0], str):
+        return None
+    v = row[0]
+    if v.startswith('cursor-safe-storage:'):
+        if not decrypt:
+            return None
+        return _decrypt_safe_storage(v.split('v1:', 1)[1])
+    return v.split('::')[-1] if '::' in v else v
+
+
+def _decrypt_safe_storage(b64_payload):
+    """Chromium os_crypt: 'v10' + AES-128-CBC, key = PBKDF2(keychain pw,
+    salt 'saltysalt', 1003 iter, 16B), IV = 16 spaces. macOS only."""
+    if SYSTEM != 'Darwin':
+        return None
+    import subprocess as sp
+    pw = sp.run(['security', 'find-generic-password', '-s', 'Cursor Safe Storage', '-w'],
+                capture_output=True, text=True).stdout.strip()
+    if not pw:
+        return None
+    raw = base64.b64decode(b64_payload)
+    ciphertext = raw[3:]  # strip 'v10'
+    import hashlib
+    key = hashlib.pbkdf2_hmac('sha1', pw.encode(), b'saltysalt', 1003, dklen=16)
+    iv = b' ' * 16
+    p = sp.run(['openssl', 'enc', '-d', '-aes-128-cbc', '-K', key.hex(), '-iv', iv.hex()],
+               input=ciphertext, capture_output=True)
+    if p.returncode != 0:
+        return None
+    return p.stdout.decode('utf-8', errors='replace').strip()
+
+
+def _checksum(token):
+    """Cursor's x-cursor-checksum header: two sha256 hashes of the token."""
+    import hashlib
+    def h(salt):
+        return hashlib.sha256((salt + token).encode()).hexdigest()
+    return f'{h("machineId")}/{h("macMachineId")}'
+
+
+def fetch_usage(token=None):
+    """Query Cursor for premium-request usage.
+
+    Priority 1: WorkosCursorSessionToken cookie (user_id::token) built from
+    the local profile + decrypted accessToken — hits cursor.com/api/usage.
+    Priority 2: DashboardService bearer check with the decrypted JWT."""
+    import urllib.request
+    import urllib.parse
+    token = token or get_auth_token()
+    if not token:
+        return None, ('no local token found — Cursor stores it encrypted and '
+                      'the keychain access was denied, or you are not logged in')
+    ua = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+          'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36')
+    user_id = get_user_id()
+    if user_id and not token.startswith('eyJ'):
+        cookie = urllib.parse.quote(f'{user_id}::{token}', safe='')
+        req = urllib.request.Request('https://cursor.com/api/usage', headers={
+            'Cookie': f'WorkosCursorSessionToken={cookie}',
+            'User-Agent': ua, 'Accept': 'application/json'})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                return {'web': json.load(r), 'status': r.status}, None
+        except Exception:
+            pass
+    headers = {
+        'authorization': f'Bearer {token}',
+        'connect-protocol-version': '1', 'content-type': 'application/proto',
+        'user-agent': 'connect-es/1.6.1',
+        'x-cursor-checksum': _checksum(token),
+        'x-ghost-mode': 'false',
+    }
+    req = urllib.request.Request(
+        'https://api2.cursor.sh/aiserver.v1.DashboardService/GetUsageBasedPremiumRequests',
+        data=b'', headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return {'proto': r.read().hex()[:512], 'status': r.status}, None
+    except Exception:
+        return None, ('endpoints rejected the local token — Cursor may have '
+                      'rotated it; paste a fresh cookie via --token or re-login')
+
+
+def usage():
+    data, err = fetch_usage()
+    if err:
+        print(f'✗ {err}')
+        print()
+        print('For exact numbers: open cursor.com/dashboard in a browser,')
+        print('DevTools → Application → Cookies → WorkosCursorSessionToken,')
+        print('then: cursor-reset usage --token "<cookie value>"')
+        return 1
+    if 'web' in data:
+        d = data['web']
+        for key, label in (('gpt-4', 'premium'), ('gpt-3.5-turbo', 'basic')):
+            g = d.get(key) or {}
+            used, maxu = g.get('numRequestsTotal', 0), g.get('maxRequestUsage')
+            if maxu:
+                pct = 100 * used // maxu
+                bar = '█' * (pct // 5) + '░' * (20 - pct // 5)
+                print(f'  {label:8} {bar} {used}/{maxu} ({pct}%)')
+                if pct >= 90:
+                    print("           ⚡ nearly exhausted — run 'reset' to re-arm")
+            else:
+                print(f'  {label:8} {used} used · no hard limit')
+        return 0
+    if data.get('status') == 200:
+        print('✓ token authorized (DashboardService 200)')
+        return 0
+    print('✗ unexpected response')
+    return 1
+
+
+# ---------------- pin-update ----------------
+
+def pin_update(unpin=False):
+    """Disable (or re-enable) Cursor's auto-updater."""
+    pj = APP_BASE / 'product.json' if APP_BASE else None
+    if not pj or not pj.exists():
+        print('✗ product.json not found')
+        return 1
+    data = json.load(open(pj))
+    upd = data.get('updateUrl')
+    if unpin:
+        if 'updateUrl' not in data:
+            print('✓ auto-update already enabled (no change)')
+            return 0
+        del data['updateUrl']
+        json.dump(data, open(pj, 'w'), indent=2)
+        print('✓ auto-update re-enabled (updateUrl restored by Cursor on next run if missing)')
+        return 0
+    if not upd:
+        print('✓ auto-update already disabled')
+        return 0
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    shutil.copy2(pj, BACKUP_DIR / f'product.json.{stamp}.bak')
+    data['_cursor_reset_updateUrl_backup'] = upd
+    del data['updateUrl']
+    json.dump(data, open(pj, 'w'), indent=2)
+    print(f'✓ auto-update disabled (updateUrl removed; backup: product.json.{stamp}.bak)')
+    print('  Cursor updates will no longer silently overwrite the patch.')
+    return 0
+
+
+# ---------------- extend (client token cap) ----------------
+
+WB_PATHS = {
+    'Darwin': Path('/Applications/Cursor.app/Contents/Resources/app/out/vs/workbench/workbench.desktop.main.js'),
+    'Windows': Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs' / 'cursor' / 'resources' / 'app' / 'out' / 'vs' / 'workbench' / 'workbench.desktop.main.js',
+}
+
+
+def extend(dry=False):
+    """Raise the CLIENT-side token cap in workbench.desktop.main.js.
+
+    Honest note: the server enforces final limits. This removes the
+    client-side UI block so the app keeps trying — server hard-stops
+    still apply. Shown as a second layer after ID rotation."""
+    wb = WB_PATHS.get(SYSTEM)
+    if not wb or not wb.exists():
+        print('✗ workbench.desktop.main.js not found')
+        return 1
+    data = wb.read_text(encoding='utf-8', errors='ignore')
+    patterns = [
+        # version-aware attempts: client token cap constants
+        (r'(?<![\w$])Cni=(2e5)(?=,)', 'Cni=9e6'),          # observed cap const on 3.30.x
+        (r'(tokenLimit\s*[:=]\s*)(2e5|2\*?10\*\*5|200000)\b', r'\g<1>9000000'),
+        (r'(maxTokens?\s*[:=]\s*)(2e5|200000)\b', r'\g<1>9000000'),
+    ]
+    patched = 0
+    for pat, repl in patterns:
+        data, n = re.subn(pat, repl, data, count=1)
+        if n:
+            patched += n
+    if dry:
+        print(f'[dry-run] would patch {patched} token-cap spots')
+        return 0 if patched else 1
+    if not patched:
+        print('✗ no token-cap patterns matched — Cursor internals changed;')
+        print('  ID rotation remains your reliable layer.')
+        return 1
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    shutil.copy2(wb, BACKUP_DIR / f'workbench.desktop.main.js.{stamp}.bak')
+    wb.write_text(data, encoding='utf-8')
+    print(f'✓ token cap raised client-side ({patched} spots, backup created)')
+    print('  NOTE: the server enforces final limits — this removes the')
+    print('  client-side block so the app keeps working until the server')
+    print('  says stop. Use with ID rotation for best effect.')
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(prog='cursor-reset')
     ap.add_argument('cmd', nargs='?', default='status',
-                    choices=['status', 'reset', 'verify', 'restore'])
+                    choices=['status', 'reset', 'verify', 'restore',
+                             'usage', 'pin-update', 'extend'])
+    ap.add_argument('--token', help='session token for usage check')
+    ap.add_argument('--unpin', action='store_true', help='re-enable auto-update')
     ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args()
     if args.cmd == 'status':
@@ -243,6 +473,12 @@ def main():
         sys.exit(0 if verify() else 1)
     elif args.cmd == 'restore':
         restore()
+    elif args.cmd == 'usage':
+        sys.exit(usage())
+    elif args.cmd == 'pin-update':
+        sys.exit(pin_update(unpin=args.unpin))
+    elif args.cmd == 'extend':
+        sys.exit(extend(dry=args.dry_run))
 
 
 # ---------------- interactive menu ----------------
@@ -250,9 +486,12 @@ def main():
 MENU = [
     ('status', 'Status', 'Show device IDs, Cursor version, backups'),
     ('reset', 'Reset device IDs', 'Rotate all IDs + patch main.js (backup first)'),
+    ('usage', 'Usage / limit check', 'Premium requests used vs max (needs web cookie)'),
+    ('extend', 'Extend token cap', 'Raise client-side token limit (backup first)'),
+    ('pin-update', 'Pin Cursor version', 'Disable auto-update so patches survive'),
     ('verify', 'Verify patch health', 'Check IDs present + patch markers valid'),
     ('restore', 'Restore main.js', 'Undo the last patch from backup'),
-    ('watch', 'Watch mode', 'Show limit status, auto-prompt when it changes'),
+    ('watch', 'Watch mode', 'Alert when Cursor regenerates device IDs'),
     ('quit', 'Quit', ''),
 ]
 
@@ -266,13 +505,13 @@ def menu():
         for i, (cmd, label, desc) in enumerate(MENU, 1):
             print(f'  {i}) {label:22} {desc}')
         try:
-            choice = input('  select [1-6]: ').strip()
+            choice = input('  select [1-9]: ').strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return
-        if choice in ('q', 'quit', '6'):
+        if choice in ('q', 'quit', '9'):
             return
-        if choice == '5':
+        if choice == '8':
             watch_mode()
             continue
         try:
@@ -282,6 +521,20 @@ def menu():
         print()
         if cmd == 'status':
             status()
+        elif cmd == 'usage':
+            import io, contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = usage()
+            print(buf.getvalue(), end='')
+        elif cmd == 'extend':
+            confirm = input('  raise client-side token cap now? [y/N]: ').strip().lower()
+            if confirm == 'y':
+                extend()
+        elif cmd == 'pin-update':
+            confirm = input('  disable Cursor auto-update? [y/N]: ').strip().lower()
+            if confirm == 'y':
+                pin_update()
         elif cmd == 'reset':
             confirm = input('  rotate all device IDs now? [y/N]: ').strip().lower()
             if confirm == 'y':

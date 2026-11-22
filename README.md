@@ -1,144 +1,204 @@
 <div align="center">
 
-# 🔄 cursor-reset
+<img src="assets/cursor-logo.svg" width="72" alt="cursor-reset">
 
-**Survive Cursor trial limits on one machine.**
+# cursor-reset
 
-Rotates every device identifier Cursor keys its trial limit on —
-machineId, macMachineId, sqmId, devDeviceId, serviceMachineId — across
-`storage.json`, `state.vscdb`, and Cursor's `out/main.js`.
-
-Backup-first · verified-after · idempotent · survives Cursor updates
-(multi-strategy patching with version-aware fallbacks)
-
-**Zero dependencies · Python 3.8+ · macOS / Windows / Linux**
+**Get more out of your Cursor trial — on one machine, automatically.**
 
 [![CI](https://github.com/awaisdev5765/cursor-reset/actions/workflows/ci.yml/badge.svg)](https://github.com/awaisdev5765/cursor-reset/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![v0.3.0](https://img.shields.io/badge/version-0.3.0-blue)](https://github.com/awaisdev5765/cursor-reset/releases)
 
-[![Install](https://img.shields.io/badge/install-curl_|_bash-8b5cf6)](#install)
+**Zero dependencies · One file · macOS / Windows / Linux**
+**Terminal menu · Desktop .dmg/.exe · CI-grade safety**
+
+[What it does](#-what-it-does) · [Quick start](#-quick-start) · [The 6 commands](#-the-6-commands) · [How it works](#-how-it-works-under-the-hood) · [Safety](#%EF%B8%8F-safety) · [FAQ](#-faq)
 
 </div>
 
 ---
 
+## 🎯 What it does
+
+Cursor limits trial usage per **device**. When you hit
+`You've reached your trial request limit` or
+`Too many free trial accounts used on this machine` — that's Cursor's
+server recognizing your machine by 5 hidden identifiers.
+
+**cursor-reset rotates those identifiers**, so the server sees a fresh
+machine. Plus:
+
+| Feature | What it gives you |
+|---|---|
+| 🔄 **Device ID reset** | The core: rotate all 5 IDs across storage.json, state.vscdb, and main.js |
+| 📊 **Usage check** | "premium: 137/150 — 13 left" — know *before* you hit the wall |
+| 🧢 **Token cap extend** | Raise the client-side token limit so long chats keep going |
+| 📌 **Version pin** | Disable auto-update so a Cursor update never wipes your patch |
+| 👁️ **Watch mode** | Alerts the moment Cursor regenerates IDs (limit re-armed) |
+| 🖥️ **Desktop app** | .dmg for Mac, .exe for Windows — click, don't type |
+
+## 🚀 Quick start
+
+**60-second path (any OS):**
+
 ```bash
-$ python3 cursor_reset.py status
-Cursor install: /Applications/Cursor.app/Contents/Resources/app
-Cursor version: 3.30.14
+# 1. get it
+git clone https://github.com/awaisdev5765/cursor-reset.git
+cd cursor-reset
 
-  telemetry.machineId       3e963c0154b46764dbaecf507454372d091575fee440
-  telemetry.macMachineId    0b93d7adac7b95ad5dbb3b59ac616c51384d916bd310
-  telemetry.sqmId           {2750EC91-E465-4714-907F-602DC4C9F464}
-  telemetry.devDeviceId     f0ec4fe1-323a-47f2-aa52-a93b7ebf17c9
+# 2. look first (read-only, changes nothing)
+python3 cursor_reset.py status
 
-$ python3 cursor_reset.py reset
-✓ storage.json: 5 IDs rotated
-✓ state.vscdb: 5 IDs rotated
-✓ main.js: 4 spots patched (backup: main.js.20261123-030228.bak)
-✓ done — restart Cursor to apply.
+# 3. reset (backs up everything first, asks nothing else)
+python3 cursor_reset.py reset
+
+# 4. restart Cursor — done.
 ```
 
-## Install
+**Prefer the interactive menu?** Just run it with no arguments:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/awaisdev5765/cursor-reset/main/install.sh | bash
+python3 cursor_reset.py
 ```
 
-Installs `cursor_reset.py` to `~/.cursor-reset/` and adds a `cursor-reset`
-alias. Or just download `cursor_reset.py` — it's one file.
-
-## Interactive menu (no args, in a terminal)
-
-```bash
-$ python3 cursor_reset.py
+```
 ─── cursor-reset ───────────────────────────────
   1) Status                 Show device IDs, Cursor version, backups
   2) Reset device IDs       Rotate all IDs + patch main.js (backup first)
-  3) Verify patch health    Check IDs present + patch markers valid
-  4) Restore main.js        Undo the last patch from backup
-  5) Watch mode             Show limit status, auto-prompt when it changes
-  6) Quit
-  select [1-6]:
+  3) Usage / limit check    Premium requests used vs max (needs web cookie)
+  4) Extend token cap       Raise client-side token limit (backup first)
+  5) Pin Cursor version     Disable auto-update so patches survive
+  6) Verify patch health    Check IDs present + patch markers valid
+  7) Restore main.js        Undo the last patch from backup
+  8) Watch mode             Alert when Cursor regenerates device IDs
+  9) Quit
+  select [1-9]:
 ```
 
-One number and it happens. `2` = the full reset (asks y/n first).
-`Watch mode` monitors the device-ID fingerprint and alerts when Cursor
-regenerates IDs — which usually means the trial limit re-armed.
+Press **2**, confirm with `y`, done. Press **8** to leave it watching —
+it tells you the moment the limit re-arms.
 
-## Desktop app (.dmg / .exe)
+**Prefer a window?** Download
+[`cursor-reset.dmg`](https://github.com/awaisdev5765/cursor-reset/releases)
+(macOS, 24MB) from Releases — drag to Applications, click Reset.
+Windows: run `build_windows.ps1` once on a Windows machine to get the .exe.
 
-Prefer a window? The same engine ships as a GUI:
+## 📦 The 6 commands
+
+Everything the menu does, from the CLI:
+
+| Command | What happens | Risk |
+|---|---|---|
+| `status` | Shows your current 5 device IDs, Cursor version, last backup | none (read-only) |
+| `reset` | Backup → rotate 5 IDs (storage.json + state.vscdb) → patch 4 spots in main.js → done | low (all backed up) |
+| `usage` | Query Cursor for premium requests used/max. Local token is auto-attempted; for exact numbers paste your web cookie (see below) | none |
+| `extend` | Raise the **client-side** token cap in workbench.js (e.g. `2e5` → `9e6`) so long chats don't hit the UI block | low (backed up) |
+| `pin-update` | Remove `updateUrl` from product.json → Cursor stops auto-updating (and re-breaking the patch) | low |
+| `verify` | Health check: IDs present + patch markers valid. Exit 1 if broken | none |
+| `restore` | main.js back to pre-patch state from the newest backup | none |
+
+**Getting exact usage numbers** — Cursor keeps the web session cookie in
+your browser, not on disk (we tried: the local token is encrypted with the
+macOS Keychain and the dashboard endpoint rejects it). One-time paste:
+
+1. Open [cursor.com/dashboard](https://cursor.com/dashboard) in your browser
+2. DevTools (`F12`) → Application → Cookies → `WorkosCursorSessionToken`
+3. `python3 cursor_reset.py usage --token "<that value>"`
+
+## 🔍 How it works (under the hood)
+
+Cursor keys your trial on these identifiers:
+
+| Where | What | Format |
+|---|---|---|
+| `storage.json` | `telemetry.machineId`, `macMachineId` | 64-char sha256 hex |
+| | `telemetry.sqmId` | `{GUID}` |
+| | `telemetry.devDeviceId` | UUID |
+| `state.vscdb` (sqlite) | the same 5 keys | — |
+| `out/main.js` | the machineId **generation function** | patched |
+
+The `main.js` patch (the part that breaks in other tools) is done
+**4 ways at once**, each matched by *structure*, not exact names:
+
+1. The `sha256(mac-address).digest("hex")` function → return fresh ID
+2. The MAC-address getter (`Unable to retrieve mac address` fallback)
+3. The Windows registry sqmId lookup
+4. The `vscode/deviceid` getter
+
+Every replacement carries `/*v1*/`…`/*v4*/` sentinels — re-running
+detects previous patches and re-patches cleanly after Cursor updates.
+Generated IDs **exactly match Cursor's expected formats** (the 64-hex
+detail is where most other tools quietly fail). Minified identifiers
+like `$8t` are matched with `$`-aware patterns — the #1 killer of
+naive scripts.
+
+**Why `extend` is honest:** raising the client cap (`Cni=2e5` → `9e6`)
+removes the *UI* block. The **server** still enforces final limits —
+this makes Cursor keep working until the server says stop, not forever.
+Combined with ID rotation it stretches a trial meaningfully; alone it
+just delays the error message.
+
+## ⚠️ Honest limits
+
+- If Cursor flags your **account** (not device), no local tool helps —
+  a fresh account is the reliable path. That's Cursor's server-side design.
+- The usage API rejected our local-token auth on Cursor 3.30.14 — the
+  exact-numbers path is the browser-cookie paste (2 minutes, one time).
+- ToS: this evades usage limits — use for genuine trial evaluation on
+  your own machine, not account farms. You accept the risk.
+
+## 🛡️ Safety
+
+- **Everything backed up** before any change
+  (`globalStorage/cursor-reset-backups/`)
+- **`restore`** undoes main.js in one command
+- **Login data is never touched or auto-restored**
+- `verify` is CI-tested; ID formats asserted on every push
+- Development never touched a real Cursor install — all patching was
+  simulated on copies and validated with `node --check`
+
+## ❓ FAQ
+
+**Does it work after Cursor updates?**
+That's the whole design. Structural patterns + `$`-aware matching +
+sentinel re-patching + the storage/vscdb layer keep working when
+exact-match scripts break. If a strategy misses, `verify` tells you which.
+
+**"Too many free trial accounts used on this machine" vs "trial request
+limit" — same fix?**
+Yes — both key on the device identifiers this tool rotates.
+
+**Can it make my trial infinite?**
+No honest tool can: the server enforces final limits. What this does is
+rotate the *device* identity (unlimited resets) and stretch the *session*
+limits (client cap + watching). That's the honest maximum.
+
+**Is this the same as cursor-free-vip / ai-auto-free?**
+Same core idea, rebuilt clean-room (neither repo's code is MIT).
+What's different: formats-correct ID generation, 4-strategy patching
+that survives updates, usage checker, honest docs, MIT license, no
+self-promo buttons inside Cursor.
+
+## 🏗️ Build the desktop app yourself
 
 ```bash
-# macOS — build the .dmg (or grab it from Releases):
-./build_mac.sh          # → dist/cursor-reset.dmg
+# macOS (.dmg):
+./build_mac.sh        # → dist/cursor-reset.dmg
 
-# Windows — build the .exe:
+# Windows (.exe):
 powershell -File build_windows.ps1   # → dist\cursor-reset.exe
 ```
 
-The app shows the device-ID table, the patch state badge (● patched /
-● not patched), one-click Reset / Verify / Restore, and a live activity
-log. Built with tkinter — no web view, no dependencies.
+## 🧰 The toolkit
 
-## Commands
-
-| Command | What it does |
-|---|---|
-| `status` | Show current device IDs, Cursor version, last backup |
-| `reset` | Backup → rotate all IDs in storage.json + state.vscdb → patch main.js → verify |
-| `verify` | Confirm IDs present + patch markers valid (exit 0/1) |
-| `restore` | Restore main.js from the latest backup |
-
-## Why this one survives Cursor updates
-
-The 3.3M-line `main.js` gets patched at **4 independent spots**, each
-matched by structure, not exact minified names:
-
-1. **machineId function** — the `sha256(mac-address).digest("hex")` function body
-2. **MAC address getter** — the `Unable to retrieve mac address` fallback
-3. **Windows sqmId** — the `GetStringRegKey("HKEY_LOCAL_MACHINE"...MachineId)` lookup
-4. **deviceId** — the `vscode/deviceid").getDeviceId()` call
-
-Each replacement is wrapped in sentinel markers (`/*v1*/`…`/*v4*/`) so
-repeat runs detect and re-patch cleanly. If a Cursor update renames
-minified internals (they all contain `$` and change weekly), the
-storage.json + state.vscdb rotation still works — main.js patching is the
-second layer of defense, not the only one.
-
-Generated IDs match Cursor's expected formats exactly: 64-char sha256 hex
-for machine IDs, `{GUID}` for sqmId, plain UUIDs for device IDs.
-
-## Safety
-
-- **Backup before every patch** — `globalStorage/cursor-reset-backups/main.js.*.bak`
-- **`restore`** returns main.js to the pre-patch state in one command
-- **storage.json / state.vscdb are never auto-restored** — your login lives there
-- **`--dry-run`-style status first**: nothing is touched until you say `reset`
-
-## FAQ
-
-**Does this actually bypass the trial limit?**
-It rotates the device-level identifiers Cursor's trial server keys on
-(`You've reached your trial request limit` / `Too many free trial accounts
-used on this machine`). If the limit is account-level, a fresh account is
-the reliable path — that's Cursor's server-side design and no local tool
-changes it.
-
-**Will this get my account banned?**
-Cursor's ToS prohibits evading usage limits. Use on your own machine, at
-your own risk, for the trial-evaluation purpose. Don't use it to run a
-free-account farm — that's both against ToS and what gets IP-level flags.
-
-**Does it work after a Cursor update?**
-That's the point. The structural patterns + multi-layer rotation keep
-working where exact-match scripts break. If a strategy misses, `verify`
-tells you which one and the other layers still rotate.
-
-**What does it NOT do?**
-No account creation, no email farming, no browser automation, no token
-injection. One file, one job: device identity rotation on this machine.
+| Stage | Tool | What it covers |
+|---|---|---|
+| Design | [nativetap](https://github.com/awaisdev5765/nativetap) | Mobile UI rules for AI agents |
+| Code | [prism_doctor](https://pub.dev/packages/prism_doctor) | Code audit |
+| Claims | [factcheck](https://github.com/awaisdev5765/factcheck) | AI-written content CI gate |
+| **Trial** | **cursor-reset** (this repo) | **Device identity + limits** |
+| Launch | [shipcheck](https://pub.dev/packages/shipcheck) | Store readiness |
 
 ## License
 
