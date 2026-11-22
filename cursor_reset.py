@@ -245,5 +245,85 @@ def main():
         restore()
 
 
+# ---------------- interactive menu ----------------
+
+MENU = [
+    ('status', 'Status', 'Show device IDs, Cursor version, backups'),
+    ('reset', 'Reset device IDs', 'Rotate all IDs + patch main.js (backup first)'),
+    ('verify', 'Verify patch health', 'Check IDs present + patch markers valid'),
+    ('restore', 'Restore main.js', 'Undo the last patch from backup'),
+    ('watch', 'Watch mode', 'Show limit status, auto-prompt when it changes'),
+    ('quit', 'Quit', ''),
+]
+
+
+def menu():
+    """Interactive menu. Works with arrow keys when a TTY supports it,
+    falls back to number selection everywhere else."""
+    while True:
+        print()
+        print('─── cursor-reset ───────────────────────────────')
+        for i, (cmd, label, desc) in enumerate(MENU, 1):
+            print(f'  {i}) {label:22} {desc}')
+        try:
+            choice = input('  select [1-6]: ').strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if choice in ('q', 'quit', '6'):
+            return
+        if choice == '5':
+            watch_mode()
+            continue
+        try:
+            cmd = MENU[int(choice) - 1][0]
+        except (ValueError, IndexError):
+            continue
+        print()
+        if cmd == 'status':
+            status()
+        elif cmd == 'reset':
+            confirm = input('  rotate all device IDs now? [y/N]: ').strip().lower()
+            if confirm == 'y':
+                reset(quiet=True)
+        elif cmd == 'verify':
+            verify()
+        elif cmd == 'restore':
+            restore()
+        input('  [enter to continue]')
+
+
+def watch_mode():
+    """Poll the reset fingerprint; a change means Cursor regenerated IDs
+    (i.e. ran) — surface it and offer a re-reset."""
+    import hashlib
+    def fingerprint():
+        h = hashlib.sha256()
+        if STORAGE_JSON.exists():
+            data = json.load(open(STORAGE_JSON, encoding='utf-8'))
+            for k in ID_KEYS:
+                h.update(str(data.get(k, '')).encode())
+        h.update(str(MAIN_JS.stat().st_mtime if MAIN_JS and MAIN_JS.exists() else 0).encode())
+        return h.hexdigest()[:12]
+    last = fingerprint()
+    print('  watching device IDs — Ctrl-C to stop')
+    try:
+        while True:
+            time.sleep(3)
+            cur = fingerprint()
+            if cur != last:
+                print(f'  ⚡ device IDs changed at {time.strftime("%H:%M:%S")} — Cursor regenerated them')
+                print('    (this often means the trial limit re-armed)')
+                last = cur
+    except KeyboardInterrupt:
+        print('\n  watch stopped')
+
+
 if __name__ == '__main__':
-    main()
+    if len(sys.argv) == 1 and sys.stdin.isatty():
+        try:
+            menu()
+        except (EOFError, KeyboardInterrupt):
+            pass
+    else:
+        main()

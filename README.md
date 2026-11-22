@@ -48,6 +48,40 @@ curl -fsSL https://raw.githubusercontent.com/awaisdev5765/cursor-reset/main/inst
 Installs `cursor_reset.py` to `~/.cursor-reset/` and adds a `cursor-reset`
 alias. Or just download `cursor_reset.py` — it's one file.
 
+## Interactive menu (no args, in a terminal)
+
+```bash
+$ python3 cursor_reset.py
+─── cursor-reset ───────────────────────────────
+  1) Status                 Show device IDs, Cursor version, backups
+  2) Reset device IDs       Rotate all IDs + patch main.js (backup first)
+  3) Verify patch health    Check IDs present + patch markers valid
+  4) Restore main.js        Undo the last patch from backup
+  5) Watch mode             Show limit status, auto-prompt when it changes
+  6) Quit
+  select [1-6]:
+```
+
+One number and it happens. `2` = the full reset (asks y/n first).
+`Watch mode` monitors the device-ID fingerprint and alerts when Cursor
+regenerates IDs — which usually means the trial limit re-armed.
+
+## Desktop app (.dmg / .exe)
+
+Prefer a window? The same engine ships as a GUI:
+
+```bash
+# macOS — build the .dmg (or grab it from Releases):
+./build_mac.sh          # → dist/cursor-reset.dmg
+
+# Windows — build the .exe:
+powershell -File build_windows.ps1   # → dist\cursor-reset.exe
+```
+
+The app shows the device-ID table, the patch state badge (● patched /
+● not patched), one-click Reset / Verify / Restore, and a live activity
+log. Built with tkinter — no web view, no dependencies.
+
 ## Commands
 
 | Command | What it does |
