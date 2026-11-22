@@ -1,0 +1,25 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: CLI help + status on a bare machine
+        run: |
+          python3 cursor_reset.py status
+          python3 cursor_reset.py verify || true
+          python3 cursor_reset.py reset --help 2>/dev/null || python3 cursor_reset.py --help
+      - name: ID format validation
+        run: |
+          python3 - << 'PY'
+          import importlib.util
+          spec = importlib.util.spec_from_file_location('cr', 'cursor_reset.py')
+          cr = importlib.util.module_from_spec(spec); spec.loader.exec_module(cr)
+          ids = cr.new_ids()
+          import re
+          assert re.fullmatch(r'[0-9a-f]{64}', ids['telemetry.machineId']), 'machineId must be 64 hex'
+          assert re.fullmatch(r'\{[0-9A-F\-]{36}\}', ids['telemetry.sqmId']), 'sqmId must be {GUID}'
+          assert re.fullmatch(r'[0-9a-f\-]{36}', ids['telemetry.devDeviceId']), 'devDeviceId must be UUID'
+          print('ID formats OK')
+          PY
