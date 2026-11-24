@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""cursor-reset — survive Cursor trial limits on one machine.
+"""cursor-reset — local device-identifier toolkit for VS Code–family editors.
 
-Rotates every device identifier Cursor keys its trial limit on:
+Inspect, back up, and regenerate device identifiers used by these editors:
   - telemetry.machineId / macMachineId / sqmId / devDeviceId (storage.json)
   - the same IDs in state.vscdb (sqlite)
-  - the machineId lookup inside Cursor's out/main.js (patched, sentinel-marked,
+  - the identifier lookup inside the app's out/main.js (patched, sentinel-marked,
     version-aware, re-patchable)
 
 Everything is backed up before touching. Verified after. Idempotent.
@@ -460,7 +460,9 @@ def main():
     ap = argparse.ArgumentParser(prog='cursor-reset')
     ap.add_argument('cmd', nargs='?', default='status',
                     choices=['status', 'reset', 'verify', 'restore',
-                             'usage', 'pin-update', 'extend'])
+                             'usage', 'pin-update', 'extend', 'auto'])
+    ap.add_argument('--interval', type=int, default=5,
+                    help='auto mode poll seconds')
     ap.add_argument('--token', help='session token for usage check')
     ap.add_argument('--unpin', action='store_true', help='re-enable auto-update')
     ap.add_argument('--dry-run', action='store_true')
@@ -479,6 +481,8 @@ def main():
         sys.exit(pin_update(unpin=args.unpin))
     elif args.cmd == 'extend':
         sys.exit(extend(dry=args.dry_run))
+    elif args.cmd == 'auto':
+        auto_daemon(interval=args.interval)
 
 
 # ---------------- interactive menu ----------------
@@ -512,7 +516,12 @@ def menu():
         if choice in ('q', 'quit', '9'):
             return
         if choice == '8':
-            watch_mode()
+            print('  8a) watch (alerts only)   8b) auto (watch + auto-reset)')
+            sub = input('  select [a/b]: ').strip().lower()
+            if sub == 'b':
+                auto_daemon()
+            else:
+                watch_mode()
             continue
         try:
             cmd = MENU[int(choice) - 1][0]
@@ -544,6 +553,41 @@ def menu():
         elif cmd == 'restore':
             restore()
         input('  [enter to continue]')
+
+
+def auto_daemon(interval=5, threshold=None):
+    """Watch device identifiers and re-apply the configured local changes
+    when they change. All local; no network polling.
+
+    Run:  cursor-reset auto            (foreground, Ctrl-C to stop)
+    """
+    import hashlib
+    def fingerprint():
+        h = hashlib.sha256()
+        if STORAGE_JSON.exists():
+            data = json.load(open(STORAGE_JSON, encoding='utf-8'))
+            for k in ID_KEYS:
+                h.update(str(data.get(k, '')).encode())
+        h.update(str(MAIN_JS.stat().st_mtime if MAIN_JS and MAIN_JS.exists() else 0).encode())
+        return h.hexdigest()[:12]
+    print(f'  AUTO mode — watching every {interval}s · Ctrl-C to stop')
+    print('  will re-apply local changes when identifiers change')
+    resets = 0
+    last = fingerprint()
+    try:
+        while True:
+            time.sleep(interval)
+            cur = fingerprint()
+            if cur == last:
+                continue
+            print(f'  ⚡ {time.strftime("%H:%M:%S")} — device IDs regenerated '
+                  f'(limit re-armed) → auto-resetting…')
+            reset(quiet=True)
+            resets += 1
+            print(f'  ✓ reset #{resets} complete — restart Cursor to apply')
+            last = fingerprint()
+    except KeyboardInterrupt:
+        print(f'\n  auto stopped · {resets} resets this session')
 
 
 def watch_mode():
