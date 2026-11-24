@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/banner.png" width="100%" alt="cursor-reset — backup-first developer toolkit">
+
 # cursor-reset
 
 **Local developer tool: inspect and rotate machine identifiers used by VS Code–family editors.**
